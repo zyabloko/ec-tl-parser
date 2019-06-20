@@ -6,7 +6,7 @@ $debugInfo = '';
 $config = [
 
 	'guzzle' => [
-		'proxy' => 'nl-userproxy-access.net.abnamro.com:8080',
+		//'proxy' => 'nl-userproxy-access.net.abnamro.com:8080',
 		'headers' => [
 				'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36',
 			],
@@ -18,7 +18,7 @@ $config = [
 	'filter_countries' => true,
     'include_countries' => [
         'NL',
-		'IT',
+		//'IT',
 		//'BG',
 		//'RO',
 		// 'LU',
@@ -27,14 +27,14 @@ $config = [
 		 //'SE',
 		 //'FR',
 		 //'BE',
-		 'NO',
+		 //'NO',
 		// 'UK',
-		 'ES',
+		 //'ES',
 		// 'PL',
 		// 'AT'
-		'HU',
-		'PT',
-		'CZ',
+		//'HU',
+		//'PT',
+		//'CZ',
     ],
 	'filter_qtsps' => false,
 	'include_qtsp'  => [

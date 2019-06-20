@@ -9,22 +9,19 @@ use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 
 // some debug info:
-if($config['filter_countries'] === true) {
-	debugMessage(sprintf('Will only include these countries: %s', implode(', ',$config['include_countries'])));
+if ($config['filter_countries'] === true) {
+    debugMessage(sprintf('Will only include these countries: %s', implode(', ', $config['include_countries'])));
 }
-if($config['filter_countries'] === true) {
-	debugMessage('Will include ALL countries.');
+if ($config['filter_countries'] === true) {
+    debugMessage('Will include ALL countries.');
 }
 
 
+$countries = getCountries();
 
-$countries = getCountries($config);
+$debug->debug('Country data', $countries);
 
-foreach($countries as $countryCode => $countryName) {
-	$providers = getProviders($config, $countryCode, $countryName);
-	//var_dump($providers);
-	
-}
+print_r($countries);
 
 
 exit;
@@ -49,7 +46,7 @@ foreach ($result['content']['tls'] as $country) {
     //        debugMessage('End of script');
     //        break;
     //    }
-    
+
     $key      = $country['territoryCode'];
     $fullName = $country['countryName'];
 
@@ -57,7 +54,7 @@ foreach ($result['content']['tls'] as $country) {
         debugMessage(sprintf('Skip %s (%s)...', $fullName, $key));
         continue;
     }
-	sleep(1);
+    sleep(1);
 
     // getting providers for this country.
     $countryUri = sprintf('https://webgate.ec.europa.eu/tl-browser/api/download/%s', $key);
@@ -87,15 +84,16 @@ foreach ($result['content']['tls'] as $country) {
                 $providers++;
                 // name of the provider
                 $name = $provider['TSPInformation'][0]['TSPName'][0]['Name'][0];
-				
-				// filter provider name:
-				if($config['filter_qtsps'] === true && !in_array($name, $config['include_qtsp'], true)) {
-					//debugMessage(sprintf('Skip QTSP %s', $name));
-					continue;
-				} else {
-					// debugMessage(sprintf('Include QTSP %s', $name));
-				}
-				
+
+                // filter provider name:
+                if ($config['filter_qtsps'] === true && !in_array($name, $config['include_qtsp'], true)) {
+                    //debugMessage(sprintf('Skip QTSP %s', $name));
+                    continue;
+                }
+                else {
+                    // debugMessage(sprintf('Include QTSP %s', $name));
+                }
+
                 //debugMessage($name);
                 // loop provider services:
                 foreach ($provider['TSPServices'][0]['TSPService'] as $service) {
@@ -104,48 +102,48 @@ foreach ($result['content']['tls'] as $country) {
                     $serviceType  = $service['ServiceInformation'][0]['ServiceTypeIdentifier'][0];
                     $serviceName  = $service['ServiceInformation'][0]['ServiceName'][0]['Name'][0];
                     $serviceState = $service['ServiceInformation'][0]['ServiceStatus'][0];
-					
-					// need to know additional info:
-					$serviceAdditional = null;
-					
-			
+
+                    // need to know additional info:
+                    $serviceAdditional = null;
+
+
                     if (!in_array($serviceType, $config['include_types'], true)) {
                         //debugMessage(sprintf('  Type "%s" will be ignored.', translateType($serviceType)));
                         continue;
                     }
-					if(!in_array($serviceState, $config['include_statuses'], true)) {
-						//debugMessage(sprintf('  State "%s" will be ignored.', $serviceState));
+                    if (!in_array($serviceState, $config['include_statuses'], true)) {
+                        //debugMessage(sprintf('  State "%s" will be ignored.', $serviceState));
                         continue;
-					}
-					//debugMessage(sprintf('  Include service %s', $serviceName));
-					//$debugInfo .= sprintf("\n\n\nService: %s\n", $serviceName);
-					//$debugInfo .= print_r(array_keys($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension']), true);
-					//$debugInfo .= print_r($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'], true);
-					
-					// 
-					
-					if($config['service_filter'] === true) {
-						$infoExtensions = [];
-						foreach($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'] as $currentExt) {
-							if(isset($currentExt['AdditionalServiceInformation'])) {
-								$infoExtName= $currentExt['AdditionalServiceInformation'][0]['URI'][0];
-								$infoExtensions[] = $infoExtName;
-							}
-						}
-						// search for extension (double array search):
-						$foundExt = false;
-						foreach($infoExtensions as $infoExt) {
-							if(in_array($infoExt, $config['service_info'], true)) {
-								$foundExt = true;
-							}
-						}
-						if(false === $foundExt) {
-							//debugMessage(sprintf('  %s is not QWAC', $serviceName));
-							continue;
-						}
-						debugMessage(sprintf('  %s is a QWAC provider', $serviceName));
-					}
-					
+                    }
+                    //debugMessage(sprintf('  Include service %s', $serviceName));
+                    //$debugInfo .= sprintf("\n\n\nService: %s\n", $serviceName);
+                    //$debugInfo .= print_r(array_keys($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension']), true);
+                    //$debugInfo .= print_r($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'], true);
+
+                    //
+
+                    if ($config['service_filter'] === true) {
+                        $infoExtensions = [];
+                        foreach ($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'] as $currentExt) {
+                            if (isset($currentExt['AdditionalServiceInformation'])) {
+                                $infoExtName      = $currentExt['AdditionalServiceInformation'][0]['URI'][0];
+                                $infoExtensions[] = $infoExtName;
+                            }
+                        }
+                        // search for extension (double array search):
+                        $foundExt = false;
+                        foreach ($infoExtensions as $infoExt) {
+                            if (in_array($infoExt, $config['service_info'], true)) {
+                                $foundExt = true;
+                            }
+                        }
+                        if (false === $foundExt) {
+                            //debugMessage(sprintf('  %s is not QWAC', $serviceName));
+                            continue;
+                        }
+                        debugMessage(sprintf('  %s is a QWAC provider', $serviceName));
+                    }
+
 
                     $translatedType  = translateType($serviceType);
                     $translatedState = translateState($serviceState);
@@ -158,7 +156,6 @@ foreach ($result['content']['tls'] as $country) {
                         $fullCert    .= chunk_split(trim($certificate), 64, "\n");
                         $fullCert    .= '-----END CERTIFICATE-----' . "\n";
 
-                        
 
                         $cert = openssl_x509_parse($fullCert);
                         $key  = openssl_pkey_get_public($fullCert);
@@ -166,14 +163,16 @@ foreach ($result['content']['tls'] as $country) {
                             // probably a bad cert, decide not to include it.
                             $pubKeyAlgo = 'unknown';
                             $sigAlgo    = 'unknown';
-                        } else {
+                        }
+                        else {
                             $res        = openssl_pkey_get_details($key);
                             $pubKeyAlgo = translateAlgorithm($cert['signatureTypeLN'] ?? '', $res['bits']);
                             $sigAlgo    = translateSig($cert['signatureTypeSN']);
-							
-							//var_dump($cert['extensions']['authorityInfoAccess']);
+
+                            //var_dump($cert['extensions']['authorityInfoAccess']);
                         }
-                    } else {
+                    }
+                    else {
                         $cert = false;
                     }
 
@@ -187,54 +186,54 @@ foreach ($result['content']['tls'] as $country) {
                         if (false === $subject) {
                             $subject = joinSubject($cert['subject']);
                         }
-						$currentTime = time();
-						if((int)$cert['validTo_time_t'] > $currentTime) {
-							$root    = [
-								'group'                => $translatedType,
-								'environment'          => 'pr',
-								'country'              => $fullName,
-								'title'                => $serviceName,
-								'commonName'           => $subject,
-								'valid-from'           => date('Y-m-d', $cert['validFrom_time_t']),
-								'valid-until'          => date('Y-m-d', $cert['validTo_time_t']),
-								'algorithm-signature'  => $sigAlgo,
-								'algorithm-pubkey'     => $pubKeyAlgo,
-								'serial-number'        => $cert['serialNumberHex'],
-								'CRL'                  => $crl,
-								'CRL-refresh-seconds'  => '',
-								'OCSP'                 => '',
-								'OCSP-refresh-seconds' => '',
-								'link-to-certificate'  => '',
-								'certificate-content'  => $certificate,
-								'description'          => $serviceName,
-								'OAR-id'               => '',
-								'contact-details'      => 'crypto.services@nl.abnamro.com',
-								'state'                => $translatedState,
-								'info-complete'        => 'TRUE',
-							];
-							$roots[] = $root;
-							$rootCount= count($roots);
-							// write to file:
-							$fileName = $rootCount . ' - '. str_replace(['/'],'_', $subject). '.cer';
-							
-							$fullCert = '-----BEGIN CERTIFICATE-----'."\n".wordwrap($certificate, 64,"\n", true)."\n-----END CERTIFICATE-----";
-							
-							file_put_contents('./certificates/' . $fileName, $fullCert);
-							
-							if(isset($cert['extensions']['authorityInfoAccess'])) {
-								// get and dump root certificate.
-								//var_dump($cert['extensions']['authorityInfoAccess']);
-								downloadRoot($rootCount . ' - '. str_replace(['/'],'_', $subject). ' ROOT.cer', $cert['extensions']['authorityInfoAccess']);
-							}
-						}
+                        $currentTime = time();
+                        if ((int)$cert['validTo_time_t'] > $currentTime) {
+                            $root      = [
+                                'group'                => $translatedType,
+                                'environment'          => 'pr',
+                                'country'              => $fullName,
+                                'title'                => $serviceName,
+                                'commonName'           => $subject,
+                                'valid-from'           => date('Y-m-d', $cert['validFrom_time_t']),
+                                'valid-until'          => date('Y-m-d', $cert['validTo_time_t']),
+                                'algorithm-signature'  => $sigAlgo,
+                                'algorithm-pubkey'     => $pubKeyAlgo,
+                                'serial-number'        => $cert['serialNumberHex'],
+                                'CRL'                  => $crl,
+                                'CRL-refresh-seconds'  => '',
+                                'OCSP'                 => '',
+                                'OCSP-refresh-seconds' => '',
+                                'link-to-certificate'  => '',
+                                'certificate-content'  => $certificate,
+                                'description'          => $serviceName,
+                                'OAR-id'               => '',
+                                'contact-details'      => 'crypto.services@nl.abnamro.com',
+                                'state'                => $translatedState,
+                                'info-complete'        => 'TRUE',
+                            ];
+                            $roots[]   = $root;
+                            $rootCount = count($roots);
+                            // write to file:
+                            $fileName = $rootCount . ' - ' . str_replace(['/'], '_', $subject) . '.cer';
+
+                            $fullCert = '-----BEGIN CERTIFICATE-----' . "\n" . wordwrap($certificate, 64, "\n", true) . "\n-----END CERTIFICATE-----";
+
+                            file_put_contents('./certificates/' . $fileName, $fullCert);
+
+                            if (isset($cert['extensions']['authorityInfoAccess'])) {
+                                // get and dump root certificate.
+                                //var_dump($cert['extensions']['authorityInfoAccess']);
+                                downloadRoot($rootCount . ' - ' . str_replace(['/'], '_', $subject) . ' ROOT.cer', $cert['extensions']['authorityInfoAccess']);
+                            }
+                        }
                     }
 
                 }
-				
+
             }
         }
     }
-	
+
     //debugMessage(sprintf('%d providers and %d services', $providers, $services));
     $index++;
 }
@@ -253,23 +252,25 @@ foreach ($roots as $fields) {
 fclose($fp);
 
 
-function downloadRoot($fileName, $rootUri) {
-	$parts = explode("\n", $rootUri);
-	
-	foreach($parts as $current) {
-		if(substr($current,0,17) === 'CA Issuers - URI:') {
-			$url = str_replace('CA Issuers - URI:','',$current);
-			$client = new Client(['proxy' => 'nl-userproxy-access.net.abnamro.com:8080']);
-			try {
-				$request = $client->request('GET', $url);
-			} catch (GuzzleException $e) {
-				debugMessage(sprintf('URL is "%s"', $url));
-				//debugMessage($e->getMessage());
-				return;
-			}
-			$content = $request->getBody()->getContents();
-			file_put_contents('./certificates/'.$fileName, $content);
-		}
-	}
+function downloadRoot($fileName, $rootUri)
+{
+    $parts = explode("\n", $rootUri);
+
+    foreach ($parts as $current) {
+        if (substr($current, 0, 17) === 'CA Issuers - URI:') {
+            $url    = str_replace('CA Issuers - URI:', '', $current);
+            $client = new Client(['proxy' => 'nl-userproxy-access.net.abnamro.com:8080']);
+            try {
+                $request = $client->request('GET', $url);
+            } catch (GuzzleException $e) {
+                debugMessage(sprintf('URL is "%s"', $url));
+
+                //debugMessage($e->getMessage());
+                return;
+            }
+            $content = $request->getBody()->getContents();
+            file_put_contents('./certificates/' . $fileName, $content);
+        }
+    }
 }
 
