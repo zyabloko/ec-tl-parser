@@ -2,6 +2,210 @@
 
 declare(strict_types=1);
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
+
+/**
+
+Download all country names. ['NL', 'BE', ...]
+*/
+function getCountries($config) {
+	debugMessage('Start of getCountries()');
+	// get country list
+	$uri    = 'https://webgate.ec.europa.eu/tl-browser/api/home';
+	$client = new Client($config['guzzle']);
+	$countries = [];
+
+	try {
+		$request = $client->request('GET', $uri);
+	} catch (GuzzleException $e) {
+		debugMessage($e->getMessage());
+		die($e->getMessage());
+	}
+	
+	$result = json_decode($request->getBody()->getContents(), true);
+	debugMessage('Counted ' . count($result['content']['tls']) . ' countries.');
+
+	// looping each country:
+	foreach ($result['content']['tls'] as $country) {
+		$key      = $country['territoryCode'];
+		$fullName = $country['countryName'];
+		
+		// filter countries:
+		if (!in_array($key, $config['include_countries'], true) && $config['filter_countries'] === true) {
+			debugMessage(sprintf('Skip %s (%s)...', $fullName, $key));
+			continue;
+		}
+		
+		debugMessage(sprintf('Will include %s (%s)', $fullName, $key));
+		$countries[$key] = $fullName;
+	}
+	
+	debugMessage('End of getCountries()');
+	return $countries;
+}
+
+function getProviders($config, $countryCode, $countryName) {
+	$providers = [];
+    // getting providers for this country.
+    $countryUri = sprintf('https://webgate.ec.europa.eu/tl-browser/api/download/%s', $countryCode);
+    $client = new Client($config['guzzle']);
+    debugMessage(sprintf('Downloading for %s (%s)', $countryName, $countryUri));
+	
+    try {
+        $countryRequest = $client->request('GET', $countryUri);
+    } catch (GuzzleException $e) {
+        die($e->getMessage());
+    }
+	
+    debugMessage('Got everything!');
+    $countryData = json_decode($countryRequest->getBody()->getContents(), true);
+    $xml         = base64_decode($countryData['content']);
+    $array       = xml2array($xml);
+    // loop each provider from this country:
+    if (!isset($array['TrustServiceProviderList'])) {
+        debugMessage(sprintf('No services listed for %s', $countryName));
+        return [];
+    }
+	
+    foreach ($array['TrustServiceProviderList'] as $list) {
+        foreach ($list as $xList) {
+            foreach ($xList as $provider) {
+				$current= [];
+                // name of the provider
+                $providerName = $provider['TSPInformation'][0]['TSPName'][0]['Name'][0];
+				
+				// include it?
+				if($config['filter_qtsps'] === true && !in_array($providerName, $config['include_qtsp'], true)) {
+					//debugMessage(sprintf('Skip QTSP %s', $providerName));
+					continue;
+				}
+				if($config['filter_qtsps'] === true && in_array($providerName, $config['include_qtsp'], true)) {
+					//debugMessage(sprintf('Include QTSP %s', $providerName));
+				}
+				
+				
+				$current['name'] = $providerName;
+				$current['services'] = getServices($config, $countryCode, $provider);
+				
+				// store in array:
+				$providers[] = $current;
+			}
+		}
+	}
+	return $providers;
+}
+
+function getServices($config, $countryCode, $provider) {
+	$services = [];
+	//debugMessage($name);
+	// loop provider services:
+	foreach ($provider['TSPServices'][0]['TSPService'] as $service) {
+		$services++;
+		// some properties if the service:
+		$serviceType  = $service['ServiceInformation'][0]['ServiceTypeIdentifier'][0];
+		$serviceName  = $service['ServiceInformation'][0]['ServiceName'][0]['Name'][0];
+		$serviceState = $service['ServiceInformation'][0]['ServiceStatus'][0];
+		
+		// filter on provider service type
+		if ($config['filter_types'] === true && !in_array($serviceType, $config['include_types'], true)) {
+			//debugMessage(sprintf('  Type "%s" will be ignored.', translateType($serviceType)));
+			continue;
+		}
+		
+		// filter on provider service state:
+		if($config['filter_statuses'] === true && !in_array($serviceState, $config['include_statuses'], true)) {
+			//debugMessage(sprintf('  State "%s" will be ignored.', $serviceState));
+			continue;
+		}
+		
+		$current = [
+			'type' => $serviceType,
+			'name' => $serviceName,
+			'state' => $serviceState,
+			'abilities' => getAbilities($config, $service),
+		];
+		
+		// filter on abilities.
+		if($config['filter_abilities'] === true && !compareArray($current['abilities'], $config['include_abilities'])) {
+			// not included.
+			//debugMessage('  Is not a QWAC');
+			continue;
+		}
+		// get the certificates:
+		getCertificates($countryCode, $current, $service);
+		
+		
+		// put in array
+		$services[] = $current;
+	}
+	return $services;
+}
+
+function getCertificates($countryCode, $provider, $service) {
+	$identities = [];
+	if(isset($service['ServiceInformation'][0]['ServiceDigitalIdentity'][0]['DigitalId'])) {
+		$identities = $service['ServiceInformation'][0]['ServiceDigitalIdentity'][0]['DigitalId'];
+	}
+	$loop = 0;
+	foreach($identities as $index => $identity) {
+		$loop++;
+		foreach(array_keys($identity) as $key) {
+			switch($key) {
+				default:
+					//debugMessage(sprintf('Current index is %s', $key));
+					break;
+				case 'X509Certificate':
+					extractCertificate($countryCode, $provider, $loop, $identity[$key][0]);
+				break;
+			}
+		}
+	}
+}
+
+function extractCertificate($countryCode, $provider, $index, $certificateData) {
+	$certContent    = '-----BEGIN CERTIFICATE-----' . "\n";
+	$certContent    .= chunk_split(trim($certificateData), 64, "\n");
+	$certContent    .= '-----END CERTIFICATE-----' . "\n";
+	
+	$fileName = sprintf('%s - %d - %s.cer', $countryCode, $index, $provider['name']);
+	$fileName = str_replace(['(',')','/'],'', $fileName);
+	$fileName = './certificates/'.$fileName;
+	// store file somewhere.
+	file_put_contents($fileName, $certContent);
+}
+
+
+
+function compareArray($abilities, $allowed) {
+	$result = false;
+	foreach($allowed as $allowedRole) {
+		foreach($abilities as $ability) {
+			if($ability === $allowedRole) {
+				$result= true;
+			}
+		}
+	}
+	return $result;
+}
+
+function getAbilities($config, $service) {
+	$return = [];
+	if(!isset($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'])) {
+		return [];
+	}
+	// loop:
+	$extensions = [];
+	foreach($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'] as $currentExt) {
+		if(isset($currentExt['AdditionalServiceInformation'])) {
+			$infoExtName= $currentExt['AdditionalServiceInformation'][0]['URI'][0];
+			$return[] = $infoExtName;
+		}
+	}
+	
+	return $return;
+}
+
 
 /**
  * Parse XML thing to a recursive array.
