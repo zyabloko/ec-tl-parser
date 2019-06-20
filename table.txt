@@ -1,0 +1,22 @@
+| Qualified certificate issuing trust service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/CA/QC). | 
+| Qualified electronic time stamp generation service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/TSA/QTST). | 
+| Time-stamping generation service, not qualified | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/TSA). | 
+| Qualified electronic delivery service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/EDS/Q). | 
+| Certificate generation service, not qualified | See for more information, [this page](https://uri.etsi.org/TrstSvc/Svctype/CA/PKC/). | 
+| Certificate generation service, not qualified | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/CA/PKC). | 
+| Qualified OCSP responder | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/Certstatus/OCSP/QC). | 
+| Qualified validation service for qualified electronic signatures and/or qualified electronic seals | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/QESValidation/Q). | 
+| Certificate validity status service, not qualified | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/Certstatus/OCSP). | 
+| Qualified preservation service for qualified electronic signatures and/or qualified electronic seals | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/PSES/Q). | 
+| National root signing CA | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/NationalRootCA-QC). | 
+| Service issuing trusted lists | See for more information, [this page](http://uri.etsi.org/TrstSvd/Svctype/TLIssuer). | 
+| Qualified electronic registered mail delivery service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/EDS/REM/Q). | 
+| Time-stamping service, not qualified | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/TSA/TSS-QC). | 
+| Identity verification service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/IdV). | 
+| Time-stamping service, not qualified | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/TSA/TSS-AdESQCandQES). | 
+| Attribute certificate generation service | See for more information, [this page](https://uri.etsi.org/TrstSvc/Svctype/ACA/). | 
+| Attribute certificate generation service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/ACA). | 
+| Trust service of an unspecified type | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/unspecified). | 
+| Registration service | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/RA). | 
+| Service responsible for issuing, publishing or maintenance of signature policies | See for more information, [this page](http://uri.etsi.org/TrstSvc/Svctype/SignaturePolicyAuthority). | 
+| Identity verification service that cannot be identified by a specific PKI-based public key. | See for more information, [this page](https://uri.etsi.org/TrstSvc/Svctype/IdV/nothavingPKIid/). | 
