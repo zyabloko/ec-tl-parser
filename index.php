@@ -19,9 +19,23 @@ if ($config['filter_countries'] === true) {
 
 $countries = getCountries();
 
-$debug->debug('Country data', $countries);
+// store all PEM files:
+foreach ($countries as $country) {
+    foreach ($country['providers'] as $provider) {
+        foreach ($provider['services'] as $service) {
+            $count = count($service['certificates']);
+            foreach ($service['certificates'] as $index => $certificate) {
+                $fileName = sprintf('./certificates/%s - %s - %s.pem', $country['code'], $provider['name'], $service['name']);
+                if ($count > 0) {
+                    $fileName = sprintf('./certificates/%s - %s - %s - %d.pem', $country['code'], $provider['name'], $service['name'], $index);
+                }
+                file_put_contents($fileName, $certificate['certificate-content']);
+            }
+        }
+    }
+}
 
-print_r($countries);
+//$logger->debug(sprintf('Country data: %s', json_encode($countries)));
 
 
 exit;
@@ -180,7 +194,7 @@ foreach ($result['content']['tls'] as $country) {
                     if (false !== $cert) {
                         $crl = '';
                         if (isset($cert['extensions']['crlDistributionPoints'])) {
-                            $crl = patchCRL($cert['extensions']['crlDistributionPoints']);
+                            $crl = patchXCRL($cert['extensions']['crlDistributionPoints']);
                         }
                         $subject = $cert['subject']['CN'] ?? false;
                         if (false === $subject) {
@@ -239,7 +253,7 @@ foreach ($result['content']['tls'] as $country) {
 }
 //file_put_contents('debug.txt', $debugInfo);
 
-$fp = fopen('output.csv', 'w');
+$fp = fopen('output.csv', 'wb');
 
 if (isset($roots[0])) {
     fputcsv($fp, array_keys($roots[0]), ';');
@@ -257,7 +271,7 @@ function downloadRoot($fileName, $rootUri)
     $parts = explode("\n", $rootUri);
 
     foreach ($parts as $current) {
-        if (substr($current, 0, 17) === 'CA Issuers - URI:') {
+        if (0 === strpos($current, 'CA Issuers - URI:')) {
             $url    = str_replace('CA Issuers - URI:', '', $current);
             $client = new Client(['proxy' => 'nl-userproxy-access.net.abnamro.com:8080']);
             try {

@@ -4,7 +4,7 @@ $roots        = [];
 $tempCertName = './temp/temporary-certificate.cer';
 $debugInfo = '';
 $config = [
-
+    'filter_expired_certificates' => true,
 	'guzzle' => [
 		//'proxy' => 'nl-userproxy-access.net.abnamro.com:8080',
 		'headers' => [
@@ -18,16 +18,16 @@ $config = [
 	'filter_countries' => true,
     'include_countries' => [
         'NL',
-		//'IT',
+		'IT',
 		//'BG',
-		//'RO',
+		'RO',
 		// 'LU',
 		// 'EL',
 		 //'DE',
-		 //'SE',
+		 'SE',
 		 //'FR',
 		 //'BE',
-		 //'NO',
+		 'NO',
 		// 'UK',
 		 //'ES',
 		// 'PL',

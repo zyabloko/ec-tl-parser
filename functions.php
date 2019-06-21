@@ -13,7 +13,7 @@ use GuzzleHttp\Exception\GuzzleException;
  */
 function getCountries(): array
 {
-    global $debug, $logger, $config;
+    global $logger, $config;
     $logger->debug('Start of getCountries()');
     // get country list
     $uri       = 'https://webgate.ec.europa.eu/tl-browser/api/home';
@@ -137,6 +137,8 @@ function getServices(string $countryCode, string $providerName, array $provider)
         $serviceName  = $service['ServiceInformation'][0]['ServiceName'][0]['Name'][0];
         $serviceState = $service['ServiceInformation'][0]['ServiceStatus'][0];
 
+        $serviceName = cleanupServiceName($serviceName);
+
         // filter on provider service type
         if ($config['filter_types'] === true && !in_array($serviceType, $config['include_types'], true)) {
             $logger->debug(sprintf('Provider "%s" of type "%s" will be ignored.', $providerName, translateType($serviceType)));
@@ -159,11 +161,11 @@ function getServices(string $countryCode, string $providerName, array $provider)
         // filter on abilities.
         if ($config['filter_abilities'] === true && !compareArray($current['abilities'], $config['include_abilities'])) {
             // not included.
-            $logger->debug(sprintf('"%s" is not a QWAC, so it will be ignored.', $providerName));
+            $logger->debug(sprintf('"%s" service "%s" is not a QWAC, so it will be ignored.', $providerName, $serviceName));
             continue;
         }
 
-        $logger->debug(sprintf('"%s" will be included.', $providerName));
+        $logger->debug(sprintf('"%s" service "%s will be included.', $providerName, $serviceName));
 
         // get the certificates:
         $current['certificates'] = getCertificates($countryCode, $providerName, $serviceName, $service);
@@ -176,6 +178,24 @@ function getServices(string $countryCode, string $providerName, array $provider)
     return $services;
 }
 
+function cleanupServiceName(string $name): string
+{
+    $return = $name;
+    if (0 === strpos($name, 'CN=')) {
+        // explode in parts:
+        $parts = explode(', ', $name);
+        foreach ($parts as $part) {
+            $moreParts = explode('=', $part);
+            if ('CN' === $moreParts[0]) {
+                $return = $moreParts[1];
+            }
+        }
+    }
+
+    return $return;
+}
+
+
 /**
  * Download certificate and root certificates if possible.
  *
@@ -187,6 +207,7 @@ function getServices(string $countryCode, string $providerName, array $provider)
  */
 function getCertificates(string $countryCode, string $providerName, string $serviceName, array $service): array
 {
+    global $config;
     $return = [];
     global $logger;
     $identities = $service['ServiceInformation'][0]['ServiceDigitalIdentity'][0]['DigitalId'] ?? [];
@@ -201,7 +222,14 @@ function getCertificates(string $countryCode, string $providerName, string $serv
                 case 'X509Certificate':
                     $logger->debug('Will extract certificate.');
                     $certificate = extractCertificate($countryCode, $providerName, $serviceName, $loop, $identity[$key][0]);
-                    $return[]    = inspectCertificate($certificate);
+                    $result      = inspectCertificate($certificate);
+                    // not filtering and not expired.
+                    if (true === $result['expired'] && true === $config['filter_expired_certificates']) {
+                        break;
+                    }
+                    $return[] = $result;
+
+
                     break;
             }
         }
@@ -216,9 +244,120 @@ function getCertificates(string $countryCode, string $providerName, string $serv
  */
 function inspectCertificate(string $fileName): array
 {
-    // check if expired.
-    // check and find root cert
-    return ['a' => $fileName];
+    global $config;
+
+    $content = file_get_contents($fileName);
+    $return  = [
+        'file_name'           => $fileName,
+        'expired'             => false,
+        'certificate-content' => getCertificateChain('', $fileName),
+    ];
+    $cert    = openssl_x509_parse($content);
+    $key     = openssl_pkey_get_public($content);;
+    if (false === $key || null === $cert['signatureTypeLN'] || null === $cert['signatureTypeSN']) {
+        // probably a bad cert, decide not to include it.
+        $return['pub_key_algo']   = 'unknown';
+        $return['signature_algo'] = 'unknown';
+
+    }
+    else {
+        $res                            = openssl_pkey_get_details($key);
+        $return['pub_key_algo']         = translateAlgorithm($cert['signatureTypeLN'] ?? '', $res['bits']);
+        $return['signature_algo']       = translateSig($cert['signatureTypeSN']);
+        $return['serial-number']        = $cert['serialNumberHex'];
+        $return['CRL-refresh-seconds']  = '';
+        $return['OCSP']                 = '';
+        $return['OCSP-refresh-seconds'] = '';
+        $return['link-to-certificate']  = '';
+        $return['valid-from']           = date('Y-m-d', $cert['validFrom_time_t']);
+        $return['valid-until']          = date('Y-m-d', $cert['validTo_time_t']);
+    }
+    if (false === $cert) {
+        return $return;
+    }
+
+    $return['crl'] = [];
+    if (isset($cert['extensions']['crlDistributionPoints'])) {
+        $return['crl'] = patchCRL($cert['extensions']['crlDistributionPoints']);
+    }
+
+    $subject     = getCertificateSubject($cert);
+    $currentTime = time();
+    $expireTime  = (int)$cert['validTo_time_t'];
+    if ($expireTime <= $currentTime) {
+        $return['expired'] = true;
+    }
+    $return['subject'] = $subject;
+    // extract and save root certificates:
+    //$root = getParentCertificate($cert);
+
+    return $return;
+}
+
+/**
+ * Download the current certificate, and place it in front of the PEM.
+ *
+ * Then inspect the certificate and search for root certificates. If they are present, submit the current PEM with the URL of the root.
+ * This should repear the process.
+ *
+ * @param string $pem
+ * @param string $url
+ * @return string
+ */
+function getCertificateChain(string $pem, string $url): string
+{
+    global $debug;
+    $debug->debug(sprintf('Now in getCertificateChain(%s)', $url));
+    if ('' === $url) {
+        return $pem;
+    }
+    $result  = '';
+    $content = file_get_contents($url);
+    // TODO convert to base64?
+
+    // insert into result:
+    $result = $content . "\n" . $pem;
+
+    $cert = openssl_x509_parse($content);
+    if (false !== $cert) {
+        $root   = getParentCertificate($cert);
+        $result = getCertificateChain($result, $root);
+    }
+    $debug->debug('Done with getCertificateChain!');
+
+    return $result;
+}
+
+
+/**
+ * @param array $cert
+ */
+function getParentCertificate(array $cert): string
+{
+    $return = '';
+    global $debug;
+    if (isset($cert['extensions']['authorityInfoAccess'])) {
+        $authInfo = $cert['extensions']['authorityInfoAccess'];
+        $strPos   = strpos($authInfo, 'CA Issuers - URI:');
+        //echo $authInfo;
+        if (false !== $strPos) {
+            $urls = explode("\n", $authInfo);
+            foreach ($urls as $url) {
+                if ('' !== trim($url)) {
+                    $strPos2 = strpos($url, 'CA Issuers - URI:');
+                    if (false !== $strPos2) {
+                        $return = trim(str_replace('CA Issuers - URI:', '', $url));
+                        //$debug->debug(sprintf('Root is: "%s"', $url));
+                        // download this root certificate into a temp file.
+                        // then inspect it for further roots?
+                    }
+                }
+            }
+
+        }
+    }
+
+    return $return;
 }
 
 
@@ -238,7 +377,7 @@ function extractCertificate(string $countryCode, string $providerName, string $s
 
     $fileName = sprintf('%s - %d - %s - %s.pem', $countryCode, $index, $providerName, $serviceName);
     $fileName = str_replace(['(', ')', '/'], '', $fileName);
-    $fileName = sprintf('./certificates/%s', $fileName);
+    $fileName = sprintf('./temp/%s', $fileName);
 
     // store file:
     file_put_contents($fileName, $certContent);
@@ -247,14 +386,10 @@ function extractCertificate(string $countryCode, string $providerName, string $s
 }
 
 /**
- *
- * @param string $fileName
+ * @param $abilities
+ * @param $allowed
+ * @return bool
  */
-function detectRootCertificate(string $fileName)
-{
-
-}
-
 function compareArray($abilities, $allowed)
 {
     $result = false;
@@ -440,11 +575,29 @@ function sxiToArray(SimpleXMLIterator $sxi): array
             $a[$sxi->key()][] = sxiToArray($sxi->current());
         }
         else {
-            $a[$sxi->key()][] = strval($sxi->current());
+            $a[$sxi->key()][] = (string)$sxi->current();
         }
     }
 
     return $a;
+}
+
+/**
+ * @param array $certificate
+ * @return string
+ */
+function getCertificateSubject(array $certificate): string
+{
+    global $debug;
+
+    $subject = $certificate['subject']['CN'] ?? '';
+    if ('' === $subject) {
+        $debug->info('Subject: ', $certificate['subject']);
+    }
+
+    //$debug->debug(sprintf('Subject is "%s"', $subject));
+
+    return $subject;
 }
 
 function debugMessage(string $message): void
@@ -454,10 +607,39 @@ function debugMessage(string $message): void
 }
 
 
-function patchCRL($string)
+/**
+ * Get nice URL's from CRL.
+ *
+ * @param string $string
+ * @return array
+ */
+function patchCRL(string $string): array
 {
-    $return = str_replace(['Full Name:', "\n", '  URI:'], '', $string);
+    global $debug;
+    $search  = ['Full Name:', 'URI:'];
+    $replace = '';
+    $return  = [];
+
+    $string = str_replace($search, $replace, $string);
+    $string = trim($string);
+
+    // may have multiple CRL's in the certificate.
+    if (false === strpos($string, ' ')) {
+        $return[] = $string;
+
+        //$debug->info(sprintf('CRL is "%s"', $string));
+
+        return $return;
+    }
+    $parts = explode(' ', $string);
+    foreach ($parts as $part) {
+        $temp = trim($part);
+        if ('' !== $temp) {
+            $return[] = $temp;
+        }
+    }
+
+    //$debug->info('CRL string', $return);
 
     return $return;
-
 }
