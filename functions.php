@@ -141,13 +141,13 @@ function getServices(string $countryCode, string $providerName, array $provider)
 
         // filter on provider service type
         if ($config['filter_types'] === true && !in_array($serviceType, $config['include_types'], true)) {
-            $logger->debug(sprintf('Provider "%s" of type "%s" will be ignored.', $providerName, translateType($serviceType)));
+            $logger->debug(sprintf('Provider "%s" service "%s" of type "%s" will be ignored.', $providerName, $serviceName, translateType($serviceType)));
             continue;
         }
 
         // filter on provider service state:
         if ($config['filter_statuses'] === true && !in_array($serviceState, $config['include_statuses'], true)) {
-            $logger->debug(sprintf('Provider "%s" with state "%s" will be ignored.', $providerName, translateState($serviceState)));
+            $logger->debug(sprintf('Provider "%s" service "%s" with state "%s" will be ignored.', $providerName, $serviceName, translateState($serviceState)));
             continue;
         }
 
@@ -161,11 +161,11 @@ function getServices(string $countryCode, string $providerName, array $provider)
         // filter on abilities.
         if ($config['filter_abilities'] === true && !compareArray($current['abilities'], $config['include_abilities'])) {
             // not included.
-            $logger->debug(sprintf('"%s" service "%s" is not a QWAC, so it will be ignored.', $providerName, $serviceName));
+            $logger->debug(sprintf('Provider "%s" service "%s" is not a QWAC, so it will be ignored.', $providerName, $serviceName));
             continue;
         }
 
-        $logger->debug(sprintf('"%s" service "%s will be included.', $providerName, $serviceName));
+        $logger->debug(sprintf('Provider "%s" service "%s will be included.', $providerName, $serviceName));
 
         // get the certificates:
         $current['certificates'] = getCertificates($countryCode, $providerName, $serviceName, $service);
@@ -238,29 +238,52 @@ function getCertificates(string $countryCode, string $providerName, string $serv
     return $return;
 }
 
+function cleanupPEMfile(string $content): string
+{
+    $search     = 'BEGIN CERTIFICATE';
+    $strPos     = strpos($content, $search);
+    $newContent = $content;
+    if (false === $strPos) {
+        // make sure that PEM file is up to par.
+        $prefix     = '-----BEGIN CERTIFICATE-----';
+        $suffix     = '-----END CERTIFICATE-----';
+        $search     = [$prefix, $suffix, "\n", ' ', "\t", "\r"];
+        $newContent = str_replace($search, '', $content);
+        $newContent = wordwrap($newContent, 64, "\n", true);
+        $newContent = implode("\n", [$prefix, $newContent, $suffix]);
+    }
+
+    return $newContent;
+
+}
+
 /**
  * @param string $fileName
  * @return array
  */
 function inspectCertificate(string $fileName): array
 {
-    global $config;
-
+    global $debug;
     $content = file_get_contents($fileName);
+    $content = cleanupPEMfile($content);
     $return  = [
         'file_name'           => $fileName,
         'expired'             => false,
-        'certificate-content' => getCertificateChain('', $fileName),
+        'valid'               => false,
+        'certificate-content' => $content,
     ];
-    $cert    = openssl_x509_parse($content);
-    $key     = openssl_pkey_get_public($content);;
+
+    // save chain separately:
+    storeCertificateChain($fileName, true);
+
+    $cert = openssl_x509_parse($content);
+    $key  = openssl_pkey_get_public($content);;
     if (false === $key || null === $cert['signatureTypeLN'] || null === $cert['signatureTypeSN']) {
         // probably a bad cert, decide not to include it.
         $return['pub_key_algo']   = 'unknown';
         $return['signature_algo'] = 'unknown';
-
     }
-    else {
+    if (false !== $key && false !== $cert && null !== $cert['signatureTypeLN'] && null !== $cert['signatureTypeSN']) {
         $res                            = openssl_pkey_get_details($key);
         $return['pub_key_algo']         = translateAlgorithm($cert['signatureTypeLN'] ?? '', $res['bits']);
         $return['signature_algo']       = translateSig($cert['signatureTypeSN']);
@@ -273,10 +296,12 @@ function inspectCertificate(string $fileName): array
         $return['valid-until']          = date('Y-m-d', $cert['validTo_time_t']);
     }
     if (false === $cert) {
+        $debug->error(sprintf('CERT "%s" is returned as INVALID.', $fileName));
+
         return $return;
     }
-
-    $return['crl'] = [];
+    $return['valid'] = true;
+    $return['crl']   = [];
     if (isset($cert['extensions']['crlDistributionPoints'])) {
         $return['crl'] = patchCRL($cert['extensions']['crlDistributionPoints']);
     }
@@ -306,17 +331,59 @@ function inspectCertificate(string $fileName): array
  */
 function getCertificateChain(string $pem, string $url): string
 {
-    global $debug;
+    global $debug, $logger;
     $debug->debug(sprintf('Now in getCertificateChain(%s)', $url));
     if ('' === $url) {
         return $pem;
     }
-    $result  = '';
+
+    if (0 === strpos($url, 'ldap://')) {
+        $logger->warn(sprintf('Cannot download URL %s.', $url));
+
+        return $pem;
+    }
+
+    set_error_handler(function () use ($logger) {
+        $logger->error('Could not download URL.');
+    });
     $content = file_get_contents($url);
-    // TODO convert to base64?
+    restore_error_handler();
+
+    if (false === $content) {
+        $logger->warn(sprintf('Cannot download URL %s because of web issues.', $url));
+
+        return $pem;
+    }
+
+    $search     = 'BEGIN CERTIFICATE';
+    $strPos     = strpos($content, $search);
+    $newContent = $content;
+    if (false === $strPos) {
+        // create temp file.
+        $file = './temp/' . substr(str_replace([':', '/', '.'], '', $url), 0, 40) . 'temp.pem';
+        file_put_contents($file, $content);
+
+        $newFile = tempnam(sys_get_temp_dir(), 'certs');
+
+        // convert cert.
+        $command = sprintf('openssl x509 -inform der -in %s -out %s', $file, $newFile);
+        $output  = [];
+        exec($command, $output);
+        $debug->debug('exec output', $output);
+        // load that cert instead.
+        $newContent = file_get_contents($newFile);
+
+        $debug->debug(sprintf('Converted %s to %s', $url, $newFile));
+    }
+    if (false !== $strPos) {
+        // just save the file to double check:
+        // create temp file.
+        $file = './temp/' . substr(str_replace([':', '/', '.'], '', $url), 0, 40) . 'temp.pem';
+        file_put_contents($file, $content);
+    }
 
     // insert into result:
-    $result = $content . "\n" . $pem;
+    $result = $newContent . "\n" . $pem;
 
     $cert = openssl_x509_parse($content);
     if (false !== $cert) {
@@ -326,6 +393,139 @@ function getCertificateChain(string $pem, string $url): string
     $debug->debug('Done with getCertificateChain!');
 
     return $result;
+}
+
+/**
+ * Download the current certificate, and place it in front of the PEM.
+ *
+ * Then inspect the certificate and search for root certificates. If they are present, submit the current PEM with the URL of the root.
+ * This should repear the process.
+ *
+ * @param string $url
+ * @param bool $first
+ * @return string
+ */
+function storeCertificateChain(string $url, bool $first): void
+{
+    global $debug, $logger;
+    if ('' === $url) {
+        return;
+    }
+
+    $debug->debug(sprintf('Now in storeCertificateChain("%s")', $url));
+
+    if (0 === strpos($url, 'ldap://')) {
+        $logger->warn(sprintf('Cannot download URL %s.', $url));
+
+        return;
+    }
+
+    set_error_handler(function () use ($logger) {
+        $logger->error('Could not download URL.');
+    });
+    $content = file_get_contents($url);
+    restore_error_handler();
+
+    if (false === $content) {
+        $logger->warn(sprintf('Cannot download URL %s because of web issues.', $url));
+
+        return;
+    }
+
+    $search     = 'BEGIN CERTIFICATE';
+    $strPos     = strpos($content, $search);
+    $newContent = $content;
+    if (false === $strPos) {
+        //$debug->debug('Convert to PEM');
+        // create temp file.
+        $file = './temp/' . substr(str_replace([':', '/', '.'], '', $url), 0, 40) . 'temp.pem';
+        file_put_contents($file, $content);
+
+        $newFile = tempnam(sys_get_temp_dir(), 'certs');
+
+        // convert cert.
+        $command = sprintf('openssl x509 -inform der -in %s -out %s', $file, $newFile);
+        $output  = [];
+        exec($command, $output);
+        //$debug->debug('exec output', $output);
+        // load that cert instead.
+        $newContent = file_get_contents($newFile);
+
+        //$debug->debug(sprintf('Converted %s to %s', $url, $newFile));
+    }
+    if (false !== $strPos) {
+        //$debug->debug('No need to convert to PEM');
+        // just save the file to double check:
+        // create temp file.
+        $file = './temp/' . substr(str_replace([':', '/', '.'], '', $url), 0, 40) . 'temp.pem';
+        file_put_contents($file, $content);
+    }
+
+    // new strpos
+    $search = 'BEGIN CERTIFICATE';
+    $strPos = strpos($newContent, $search);
+    if (false !== $strPos) {
+        $newContent = cleanupPEMfile($newContent);
+    }
+    // write exception for slowak idiots who submit pkcs7 as root cert.
+    if ('http://ep.nbusr.sk/kca/certs/kca3/kcanbusr3_p7c.p7c' === $url) {
+        $tempStorage     = tempnam(sys_get_temp_dir(), 'certs');
+        $tempDestination = tempnam(sys_get_temp_dir(), 'certs');
+        $tempContent     = file_get_contents($url);
+        file_put_contents($tempStorage, $tempContent);
+        $command = sprintf('openssl pkcs7 -print_certs -in %s -inform der -out %s -outform pem', $tempStorage, $tempDestination);
+        exec($command);
+
+        // remove everything before the "--- begin cert"
+        $tempContent = file_get_contents($tempDestination);
+        $pos         = strpos($tempContent, '-----BEGIN CERTIFICAT');
+        if (0 !== $pos) {
+            $tempContent = substr($tempContent, $pos);
+        }
+        $newContent = $tempContent;
+
+    }
+
+
+    $cert = openssl_x509_parse($newContent);
+    if (false === $cert) {
+        $debug->error(sprintf('This certificate is NOT readable :( %s.', $url));
+        $debug->error(sprintf('Error is: %s', openssl_error_string()));
+    }
+    if (false !== $cert) {
+        //$debug->debug('Certificate is readable.');
+        if ($first === true) {
+            //$debug->debug('Will not store on disk, its the first one.');
+        }
+        if ($first === false) {
+            //$debug->debug('Will store certificate on disk.');
+            $subject = getCertificateSubject($cert);
+
+            // NEW store in certificates directory:
+            // new file name for KPN:
+            $fileName = sprintf('%s.pem', $subject);
+            $fileName = str_replace(['/', '  '], '', $fileName);
+            $fullPath = sprintf('./certificates/%s', $fileName);
+
+
+            // if file exists, add a random number:
+            if (file_exists($fileName)) {
+                $fileName = sprintf('%s - r%d.pem', $subject, random_int(1, 12345));
+                $fileName = str_replace(['/', '  '], '', $fileName);
+                $fullPath = sprintf('./certificates/%s', $fileName);
+            }
+            file_put_contents($fullPath, $newContent);
+            $debug->debug(sprintf('Now getting the parent certificate of %s', $subject));
+        }
+
+        $roots = getParentCertificates($cert);
+        foreach ($roots as $root) {
+            if ($root !== $url) {
+                storeCertificateChain($root, false);
+            }
+        }
+    }
+    //$debug->debug('Done with getCertificateChain!');
 }
 
 
@@ -347,6 +547,37 @@ function getParentCertificate(array $cert): string
                     $strPos2 = strpos($url, 'CA Issuers - URI:');
                     if (false !== $strPos2) {
                         $return = trim(str_replace('CA Issuers - URI:', '', $url));
+                        //$debug->debug(sprintf('Root is: "%s"', $url));
+                        // download this root certificate into a temp file.
+                        // then inspect it for further roots?
+                    }
+                }
+            }
+
+        }
+    }
+
+    return $return;
+}
+
+/**
+ * @param array $cert
+ */
+function getParentCertificates(array $cert): array
+{
+    $return = [];
+    global $debug;
+    if (isset($cert['extensions']['authorityInfoAccess'])) {
+        $authInfo = $cert['extensions']['authorityInfoAccess'];
+        $strPos   = strpos($authInfo, 'CA Issuers - URI:');
+        //echo $authInfo;
+        if (false !== $strPos) {
+            $urls = explode("\n", $authInfo);
+            foreach ($urls as $url) {
+                if ('' !== trim($url)) {
+                    $strPos2 = strpos($url, 'CA Issuers - URI:');
+                    if (false !== $strPos2) {
+                        $return[] = trim(str_replace('CA Issuers - URI:', '', $url));
                         //$debug->debug(sprintf('Root is: "%s"', $url));
                         // download this root certificate into a temp file.
                         // then inspect it for further roots?
@@ -411,8 +642,8 @@ function compareArray($abilities, $allowed)
  */
 function getAbilities(array $service): array
 {
-    global $logger;
-    $logger->debug('Now listing the abilities of the provider.');
+    //global $logger, $debug;
+    //$debug->debug('Now listing the abilities of the provider.');
     $return = [];
     if (!isset($service['ServiceInformation'][0]['ServiceInformationExtensions'][0]['Extension'])) {
         return [];
@@ -593,6 +824,7 @@ function getCertificateSubject(array $certificate): string
     $subject = $certificate['subject']['CN'] ?? '';
     if ('' === $subject) {
         $debug->info('Subject: ', $certificate['subject']);
+        $subject = $certificate['subject']['OU'] . ' ' . $certificate['subject']['O'];
     }
 
     //$debug->debug(sprintf('Subject is "%s"', $subject));

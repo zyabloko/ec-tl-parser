@@ -18,24 +18,76 @@ if ($config['filter_countries'] === true) {
 
 
 $countries = getCountries();
+$csv       = [];
 
 // store all PEM files:
 foreach ($countries as $country) {
     foreach ($country['providers'] as $provider) {
         foreach ($provider['services'] as $service) {
             $count = count($service['certificates']);
+
+            $translatedType  = translateType($service['type']);
+            $translatedState = translateState($service['state']);
+
             foreach ($service['certificates'] as $index => $certificate) {
-                $fileName = sprintf('./certificates/%s - %s - %s.pem', $country['code'], $provider['name'], $service['name']);
-                if ($count > 0) {
-                    $fileName = sprintf('./certificates/%s - %s - %s - %d.pem', $country['code'], $provider['name'], $service['name'], $index);
+                if ($certificate['expired'] === false && $certificate['valid'] === true) {
+
+                    // new file name for KPN:
+                    $fileName = sprintf('%s.pem', $certificate['subject']);
+                    $fileName = str_replace(['/', '  '], '', $fileName);
+                    $fullPath = sprintf('./certificates/%s', $fileName);
+
+
+                    // if file exists, add a random number:
+                    if (file_exists($fileName)) {
+                        $fileName = sprintf('%s - r%d.pem', $certificate['subject'], random_int(1, 12345));
+                        $fileName = str_replace(['/', '  '], '', $fileName);
+                        $fullPath = sprintf('./certificates/%s', $fileName);
+                    }
+                    file_put_contents($fullPath, $certificate['certificate-content']);
+
+                    // also write to big array.
+                    $csv[] = [
+                        'group'                => $translatedType,
+                        'environment'          => 'pr',
+                        'country'              => $country['name'],
+                        'title'                => $service['name'],
+                        'commonName'           => $certificate['subject'] ?? '',
+                        'valid-from'           => $certificate['valid-from'] ?? '',
+                        'valid-until'          => $certificate['valid-until'] ?? '',
+                        'algorithm-signature'  => $certificate['signature_algo'],
+                        'algorithm-pubkey'     => $certificate['pub_key_algo'],
+                        'serial-number'        => $certificate['serial-number'],
+                        'CRL'                  => implode(' ', $certificate['crl']),
+                        'CRL-refresh-seconds'  => '',
+                        'OCSP'                 => '',
+                        'OCSP-refresh-seconds' => '',
+                        'link-to-certificate'  => '',
+                        'certificate-content'  => $certificate['certificate-content'],
+                        'description'          => $provider['name'] . ' ' . $service['name'],
+                        'OAR-id'               => '',
+                        'contact-details'      => 'crypto.services@nl.abnamro.com',
+                        'state'                => $translatedState,
+                        'info-complete'        => 'TRUE',
+                    ];
                 }
-                file_put_contents($fileName, $certificate['certificate-content']);
             }
         }
     }
 }
 
 //$logger->debug(sprintf('Country data: %s', json_encode($countries)));
+
+$fp = fopen('output.csv', 'wb');
+
+if (isset($roots[0])) {
+    fputcsv($fp, array_keys($roots[0]), ';');
+
+}
+fclose($fp);
+
+
+echo "\nDone!\n";
 
 
 exit;
